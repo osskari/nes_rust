@@ -33,8 +33,8 @@ impl CPU {
     }
 
     // Writes a value into a specific addres of memory
-    fn mem_write(&mut self, addr: u16, data: u8) {
-        self.memory[addr as usize] = data;
+    fn mem_write(&mut self, address: u16, data: u8) {
+        self.memory[address as usize] = data;
     }
 
     // Reads two bytes from memory
@@ -115,19 +115,27 @@ impl CPU {
             // ADC
             0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
                 self.adc(&opcode.mode);
-            },
+            }
             // AND
             0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
                 self.and(&opcode.mode);
-            },
+            }
+            // ASL
+            0x0A | 0x06 | 0x16 | 0x0E | 0x1E => {
+                self.asl(&opcode.mode);
+            }
+            // BCC
+            0x90 => {
+                self.bcc(&opcode.mode);
+            }
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
-            },
+            }
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
-            },
+            }
             // TAX
             0xAA => self.tax(),
             // INX
@@ -207,6 +215,7 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_a);
     }
 
+    // Logical and
     fn and(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
         let value = self.mem_read(address);
@@ -214,6 +223,37 @@ impl CPU {
         self.register_a &= value;
 
         self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    // Arithmetic shift left
+    fn asl(&mut self, mode: &AddressingMode) {
+        let carry_mask: u8 = 0b1000_0000;
+        let mut value: u8;
+
+        match mode {
+            AddressingMode::NoneAddressing => {
+                self.set_carry(self.register_a & carry_mask == 0x80);
+                self.register_a <<= 1;
+                value = self.register_a;
+            }
+            _ => {
+                let address = self.get_operand_address(mode);
+                value = self.mem_read(address);
+
+                self.set_carry(value & carry_mask == 0x80);
+
+                value <<= 1;
+                self.mem_write(address, value);
+            }
+        }
+        self.update_zero_and_negative_flags(value);
+    }
+
+    // Branch if carry clear
+    fn bcc(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
     }
 
     // Set register a opcode
@@ -276,6 +316,8 @@ impl CPU {
 
 #[cfg(test)]
 mod test {
+    use std::vec;
+
     use super::*;
 
     #[test]
@@ -363,5 +405,25 @@ mod test {
         assert_eq!(cpu.register_a, 0x5A & 0x33);
         assert!(cpu.status & 0b0000_0010 == 0);
         assert!(cpu.status & 0b1000_0000 == 0);
+    }
+
+    #[test]
+    fn test_asl_shift_no_accum() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xA9, 0x0F, 0x0A]);
+
+        assert_eq!(cpu.register_a, 0x0F << 1);
+        assert!(cpu.register_a & 0b1000_000 == 0);
+    }
+
+    #[test]
+    fn test_asl_shift_zero_page() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0xF0, 0xF1);
+
+        cpu.load_and_run(vec![0x06, 0xF0, 0x00]);
+
+        assert_eq!(cpu.mem_read(0xF0), 0xF1 << 1);
+        assert!(cpu.status & 0b1000_0000 == 0x80);
     }
 }
