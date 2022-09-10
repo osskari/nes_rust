@@ -4,7 +4,20 @@ use crate::{
 };
 
 const PROGRAM_START: u16 = 0x8000;
-const RESET_START: u16 = 0xFFFC;
+const RESET_POINTER: u16 = 0xFFFC;
+
+bitflags! {
+    pub struct CpuFlags: u8 {
+        const CARRY             = 0b00000001;
+        const ZERO              = 0b00000010;
+        const INTERRUPT_DISABLE = 0b00000100;
+        const DECIMAL_MODE      = 0b00001000;
+        const BREAK             = 0b00010000;
+        const BREAK2            = 0b00100000;
+        const OVERFLOW          = 0b01000000;
+        const NEGATIVE          = 0b10000000;
+    }
+}
 
 pub struct CPU {
     pub register_a: u8,
@@ -15,27 +28,9 @@ pub struct CPU {
     memory: [u8; 0xFFFF],
 }
 
-impl CPU {
-    pub fn new() -> Self {
-        CPU {
-            register_a: 0,
-            register_x: 0,
-            register_y: 0,
-            status: 0,
-            program_counter: 0,
-            memory: [0; 0xFFFF],
-        }
-    }
-
-    // Reads a value from a specific addres of memory
-    fn mem_read(&self, address: u16) -> u8 {
-        return self.memory[address as usize];
-    }
-
-    // Writes a value into a specific addres of memory
-    fn mem_write(&mut self, address: u16, data: u8) {
-        self.memory[address as usize] = data;
-    }
+trait Mem {
+    fn mem_read(&self, address: u16) -> u8;
+    fn mem_write(&mut self, address: u16, value: u8);
 
     // Reads two bytes from memory
     fn mem_read_u16(&mut self, pos: u16) -> u16 {
@@ -54,6 +49,35 @@ impl CPU {
         let high = (data >> 8) as u8;
         self.mem_write(pos, low);
         self.mem_write(pos + 1, high);
+    }
+}
+
+impl Mem for CPU {
+    // Reads a value from a specific addres of memory
+    fn mem_read(&self, address: u16) -> u8 {
+        return self.memory[address as usize];
+    }
+
+    // Writes a value into a specific addres of memory
+    fn mem_write(&mut self, address: u16, data: u8) {
+        self.memory[address as usize] = data;
+    }
+}
+
+impl CPU {
+    pub fn new() -> Self {
+        CPU {
+            register_a: 0,
+            register_x: 0,
+            register_y: 0,
+            status: 0,
+            program_counter: 0,
+            memory: [0; 0xFFFF],
+        }
+    }
+
+    fn mask(&self, value: u8, mask: CpuFlags) -> u8 {
+        return value & mask.bits;
     }
 
     fn get_operand_address(&mut self, mode: &AddressingMode) -> u16 {
@@ -157,7 +181,7 @@ impl CPU {
         self.register_y = 0;
         self.status = 0;
 
-        self.program_counter = self.mem_read_u16(RESET_START);
+        self.program_counter = self.mem_read_u16(RESET_POINTER);
     }
 
     // Load the program rom into memory
@@ -165,7 +189,7 @@ impl CPU {
         // The program starts at 0x8000 and runs to 0xFFFF
         self.memory[PROGRAM_START as usize..(PROGRAM_START as usize + program.len())]
             .copy_from_slice(&program[..]);
-        self.mem_write_u16(RESET_START, PROGRAM_START);
+        self.mem_write_u16(RESET_POINTER, PROGRAM_START);
     }
 
     // Loads the rom into memory and runs the code
@@ -206,10 +230,10 @@ impl CPU {
         // If overflow
         if sum_16 > u8::MAX as u16 {
             self.register_a = (sum_16 - 0xFF) as u8;
-            self.set_carry(true);
+            self.set_carry(CpuFlags::CARRY.bits);
         } else {
             self.register_a = sum_16 as u8;
-            self.set_carry(false);
+            self.set_carry(0);
         }
 
         self.update_zero_and_negative_flags(self.register_a);
@@ -227,12 +251,11 @@ impl CPU {
 
     // Arithmetic shift left
     fn asl(&mut self, mode: &AddressingMode) {
-        let carry_mask: u8 = 0b1000_0000;
         let mut value: u8;
 
         match mode {
             AddressingMode::NoneAddressing => {
-                self.set_carry(self.register_a & carry_mask == 0x80);
+                self.set_carry(self.register_a);
                 self.register_a <<= 1;
                 value = self.register_a;
             }
@@ -240,7 +263,7 @@ impl CPU {
                 let address = self.get_operand_address(mode);
                 value = self.mem_read(address);
 
-                self.set_carry(value & carry_mask == 0x80);
+                self.set_carry(value);
 
                 value <<= 1;
                 self.mem_write(address, value);
@@ -253,7 +276,6 @@ impl CPU {
     fn bcc(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
         let value = self.mem_read(address);
-
     }
 
     // Set register a opcode
@@ -305,8 +327,8 @@ impl CPU {
         }
     }
 
-    fn set_carry(&mut self, value: bool) {
-        if value {
+    fn set_carry(&mut self, value: u8) {
+        if self.mask(value, CpuFlags::CARRY) == CpuFlags::CARRY.bits {
             self.status = self.status | 0b0000_0001; // On
         } else {
             self.status = self.status & 0b111_1110; // Off
