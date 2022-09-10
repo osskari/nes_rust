@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use crate::addressing_mode::AddressingMode;
 
 pub struct OpCode {
