@@ -1,4 +1,7 @@
-use crate::{addressing_mode::AddressingMode, opcode::{OpCode, OPCODES_MAP}};
+use crate::{
+    addressing_mode::AddressingMode,
+    opcode::{OpCode, OPCODES_MAP},
+};
 
 const PROGRAM_START: u16 = 0x8000;
 const RESET_START: u16 = 0xFFFC;
@@ -25,8 +28,8 @@ impl CPU {
     }
 
     // Reads a value from a specific addres of memory
-    fn mem_read(&self, addr: u16) -> u8 {
-        return self.memory[addr as usize];
+    fn mem_read(&self, address: u16) -> u8 {
+        return self.memory[address as usize];
     }
 
     // Writes a value into a specific addres of memory
@@ -109,14 +112,22 @@ impl CPU {
 
     fn run_instruction(&mut self, opcode: &OpCode) -> bool {
         match opcode.opcode {
+            // ADC
+            0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                self.adc(&opcode.mode);
+            },
+            // AND
+            0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+                self.and(&opcode.mode);
+            },
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
-            }
+            },
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
-            }
+            },
             // TAX
             0xAA => self.tax(),
             // INX
@@ -158,7 +169,7 @@ impl CPU {
 
     pub fn run(&mut self) {
         loop {
-            let code = self.mem_read(self.program_counter); 
+            let code = self.mem_read(self.program_counter);
             let opcode = OPCODES_MAP
                 .get(&code)
                 .expect(&format!("OpCode {:#01x} not found in map", code));
@@ -174,6 +185,35 @@ impl CPU {
                 return;
             }
         }
+    }
+
+    // Add with carry
+    fn adc(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        // Cast the sum to u16 to detect overflow withou panic
+        let sum_16 = self.register_a as u16 + value as u16;
+
+        // If overflow
+        if sum_16 > u8::MAX as u16 {
+            self.register_a = (sum_16 - 0xFF) as u8;
+            self.set_carry(true);
+        } else {
+            self.register_a = sum_16 as u8;
+            self.set_carry(false);
+        }
+
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn and(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.register_a &= value;
+
+        self.update_zero_and_negative_flags(self.register_a);
     }
 
     // Set register a opcode
@@ -222,6 +262,14 @@ impl CPU {
             self.status = self.status | 0b1000_0000; // On
         } else {
             self.status = self.status & 0b0111_1111; // Off
+        }
+    }
+
+    fn set_carry(&mut self, value: bool) {
+        if value {
+            self.status = self.status | 0b0000_0001; // On
+        } else {
+            self.status = self.status & 0b111_1110; // Off
         }
     }
 }
@@ -283,5 +331,37 @@ mod test {
         cpu.load_and_run(vec![0xA9, 0xFF, 0xAA, 0xE8, 0xE8, 0x00]);
 
         assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    fn test_adc_adds() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xA9, 0x10, 0x69, 0x15, 0x00]);
+
+        // Sum correct
+        assert_eq!(cpu.register_a, 0x10 + 0x15);
+        // No overflow
+        assert!(cpu.status & 0b0000_0001 == 0);
+    }
+
+    #[test]
+    fn test_adc_adds_and_overflows() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xA9, 0xFF, 0x69, 0x10, 0x00]);
+
+        // Sum correct
+        assert_eq!(cpu.register_a, 0x10);
+        // Overflow occurred
+        assert!(cpu.status & 0b0000_0001 == 1);
+    }
+
+    #[test]
+    fn test_op_and() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xA9, 0x5A, 0x29, 0x33]);
+
+        assert_eq!(cpu.register_a, 0x5A & 0x33);
+        assert!(cpu.status & 0b0000_0010 == 0);
+        assert!(cpu.status & 0b1000_0000 == 0);
     }
 }
