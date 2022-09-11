@@ -52,7 +52,8 @@ lazy_static! {
         OpCode::new(0x0E, "ASL", 3, 6, AddressingMode::Absolute),
         OpCode::new(0x1E, "ASL", 3, 7, AddressingMode::Absolute_X),
         
-        OpCode::new(0x90, "BCC", 2, 2, AddressingMode::Immediate),
+        OpCode::new(0x90, "BCC", 2, 2, AddressingMode::NoneAddressing),
+        OpCode::new(0xB0, "BCS", 2, 2, AddressingMode::NoneAddressing),
         
         OpCode::new(0xA9, "LDA", 2, 2, AddressingMode::Immediate),
         OpCode::new(0xA5, "LDA", 2, 3, AddressingMode::ZeroPage),
