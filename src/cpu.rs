@@ -171,7 +171,7 @@ impl Flags for CPU {
 
     // NEGATIVE
     fn is_negative(&self, value: u8) -> bool {
-        return value & 0b1000_0000 == 1;
+        return value & 0b1000_0000 != 0;
     }
 
     fn set_negative(&mut self, value: bool) {
@@ -292,6 +292,16 @@ impl CPU {
             0x90 => self.bcc(),
             // BCS
             0xB0 => self.bcs(),
+            // BEQ
+            0xF0 => self.beq(),
+            // BIT
+            0x24 | 0x2C => {
+                self.bit(&opcode.mode)
+            }
+            // BMI
+            0x30 => self.bmi(),
+            // BNE
+            0xD0 => self.bne(),
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
@@ -359,6 +369,19 @@ impl CPU {
         }
     }
 
+    // HELPERS
+    fn branch(&mut self, condition_no_branch: bool, mode: &AddressingMode) {
+        if condition_no_branch {
+            return;
+        }
+
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.program_counter += value as u16;
+    }
+
+    // OPERATIONS
     // Add with carry
     fn adc(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
@@ -406,26 +429,40 @@ impl CPU {
 
     // Branch if carry clear
     fn bcc(&mut self) {
-        if self.get_flag(CpuFlags::CARRY) {
-            return;
-        }
-
-        let address = self.get_operand_address(&AddressingMode::Immediate);
-        let value = self.mem_read(address);
-
-        self.program_counter += value as u16;
+        self.branch(self.get_flag(CpuFlags::CARRY), &AddressingMode::Immediate)
     }
 
     // Branch if carry set
     fn bcs(&mut self) {
-        if !self.get_flag(CpuFlags::CARRY) {
-            return;
-        }
+        self.branch(!self.get_flag(CpuFlags::CARRY), &AddressingMode::Immediate)
+    }
 
-        let address = self.get_operand_address(&AddressingMode::Immediate);
+    // Branch if equal
+    fn beq(&mut self) {
+        self.branch(!self.get_flag(CpuFlags::ZERO), &AddressingMode::Immediate)
+    }
+
+    // Bit test
+    fn bit(&mut self, mode: &AddressingMode)
+    {
+        let address = self.get_operand_address(mode);
         let value = self.mem_read(address);
 
-        self.program_counter += value as u16;
+        // Set zero if A and value == 0
+        self.set_zero(self.register_a & value == 0);
+
+        self.set_overflow(value & 0b0100_0000 != 0);
+        self.set_negative(value & 0b1000_0000 != 0);
+    }
+
+    // Branch if minus
+    fn bmi(&mut self) {
+        self.branch(!self.get_flag(CpuFlags::NEGATIVE), &AddressingMode::Immediate);
+    }
+
+    // Branch if not equal
+    fn bne(&mut self) {
+        self.branch(self.get_flag(CpuFlags::ZERO), &AddressingMode::Immediate);
     }
 
     // Set register a opcode
@@ -603,7 +640,7 @@ mod test {
         assert_eq!(cpu.mem_read(0xF0), 0xF1 << 1);
         assert!(cpu.get_flag(CpuFlags::CARRY));
         assert!(!cpu.get_flag(CpuFlags::ZERO));
-        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
     #[test]
@@ -632,5 +669,67 @@ mod test {
         let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x69, 0x10, 0xB0, 0xEE, 0x00], Some(vec![(0x80F3, 0x0A), (0x80F4, 0x00)]));
         
         assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10) << 1);
+    }
+
+    #[test]
+    fn test_beq_does_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0xF0, 0xEE, 0x00], Some(vec![(0x80F1, 0xA9), (0x80F2, 0x69), (0x80F3, 0x00)]));
+
+        assert_eq!(cpu.register_a, 0x69);
+    }
+    
+    #[test]
+    fn test_beq_does_not_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x10, 0x69, 0x10, 0xF0, 0xEE, 0x00], Some(vec![(0x80F3, 0x0A), (0x80F4, 0x00)]));
+        
+        assert_eq!(cpu.register_a, (0x10 as u8).wrapping_add(0x10));
+    }
+
+    #[test]
+    fn test_bit_test_is_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_1010, 0x24, 0xEE, 0x00], Some(vec![(0xEE, 0b0101_0101)]));
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+
+        assert!(cpu.get_flag(CpuFlags::OVERFLOW));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_bit_test_is_not_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_1010, 0x24, 0xEE, 0x00], Some(vec![(0xEE, 0b0101_1010)]));
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+
+        assert!(cpu.get_flag(CpuFlags::OVERFLOW));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_bmi_does_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x30, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+
+        assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10));
+    }
+
+    #[test]
+    fn test_bmi_does_not_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x0F, 0x30, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+
+        assert_eq!(cpu.register_a, 0x0F);
+    }
+
+    #[test]
+    fn test_bne_does_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x01, 0xD0, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]));
+
+        assert_eq!(cpu.register_a, 0x01 + 0x69);
+    }
+
+    #[test]
+    fn test_bne_does_not_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0xD0, 0xEE, 0x69, 0x15, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]));
+
+        assert_eq!(cpu.register_a, 0x15);
     }
 }
