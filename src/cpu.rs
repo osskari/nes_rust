@@ -1,3 +1,5 @@
+use std::fmt::Error;
+
 use crate::{
     addressing_mode::AddressingMode,
     opcode::{OpCode, OPCODES_MAP},
@@ -80,6 +82,26 @@ trait Flags {
         };
     }
 
+    fn get_bit_at_n_u8(&self, value: u8, n: u8) -> Result<bool, &'static str> {
+        if n >= 8 {
+            return Err("n is out of bounds. It is only valid when n < 8");
+        }
+
+        let bit: bool = match n {
+            0 => self.mask(value, CpuFlags::CARRY, LogicalOperator::AND, false) != 0,
+            1 => self.mask(value, CpuFlags::ZERO, LogicalOperator::AND, false) != 0,
+            2 => self.mask(value, CpuFlags::INTERRUPT_DISABLE, LogicalOperator::AND, false) != 0,
+            3 => self.mask(value, CpuFlags::DECIMAL_MODE, LogicalOperator::AND, false) != 0,
+            4 => self.mask(value, CpuFlags::BREAK, LogicalOperator::AND, false) != 0,
+            5 => self.mask(value, CpuFlags::BREAK2, LogicalOperator::AND, false) != 0,
+            6 => self.mask(value, CpuFlags::OVERFLOW, LogicalOperator::AND, false) != 0,
+            7 => self.mask(value, CpuFlags::NEGATIVE, LogicalOperator::AND, false) != 0,
+            _ => panic!("How did you get here"),
+        };
+
+        return Ok(bit);
+    }
+
     fn set_flag(&mut self, value: bool, flag: CpuFlags);
     fn get_flag(&self, flag: CpuFlags) -> bool;
 
@@ -100,7 +122,7 @@ trait Flags {
     // OVERFLOW
     fn is_overflow(&self, value: u16) -> bool;
     fn set_overflow(&mut self, value: bool);
-    fn set_overflow_from_value(&mut self, value: u16);
+    fn set_overflow_from_value(&mut self, value: u8, result: u8);
 
     // NEGATIVE
     fn is_negative(&self, value: u8) -> bool;
@@ -165,8 +187,19 @@ impl Flags for CPU {
         self.set_flag(value, CpuFlags::OVERFLOW);
     }
 
-    fn set_overflow_from_value(&mut self, value: u16) {
-        self.set_overflow(self.is_overflow(value));
+    fn set_overflow_from_value(&mut self, value: u8, result: u8) {
+        let m = self.register_a;
+        let n = value;
+        let c = result;
+
+        let left_inner = !(self.get_bit_at_n_u8(m, 7).unwrap() | self.get_bit_at_n_u8(n, 7).unwrap());
+        let left = left_inner & self.get_bit_at_n_u8(c, 6).unwrap();
+
+        let right_inner = !(self.get_bit_at_n_u8(m, 7).unwrap() | self.get_bit_at_n_u8(n, 7).unwrap());
+        let right = !(right_inner | self.get_bit_at_n_u8(c, 6).unwrap());
+
+        let formula = !(!(left | right));
+        self.set_overflow(formula);
     }
 
     // NEGATIVE
@@ -185,25 +218,7 @@ impl Flags for CPU {
     // HELPERS
     fn set_zero_and_negative(&mut self, result: u8) {
         self.set_zero_from_value(result);
-        // if result == 0 {
-        //     // Zero flag
-        //     // self.status = self.status | CpuFlags::ZERO.bits; // On
-        //     self.status = self.mask(self.status, CpuFlags::ZERO, LogicalOperator::OR);
-        // // On
-        // } else {
-        //     // self.status = self.status & !CpuFlags::ZERO.bits; // Off
-        //     self.status = self.mask(self.status, !CpuFlags::ZERO, LogicalOperator::AND); // Off
-        // }
         self.set_negative_from_value(result);
-        // if result & CpuFlags::NEGATIVE.bits != 0 {
-        //     // Negative flag
-        //     // self.status = self.status | 0b1000_0000; // On
-        //     self.status = self.mask(self.status, CpuFlags::NEGATIVE, LogicalOperator::OR);
-        // // On
-        // } else {
-        //     // self.status = self.status & 0b0111_1111; // Off
-        //     self.status = self.mask(self.status, !CpuFlags::NEGATIVE, LogicalOperator::AND); // Off
-        // }
     }
 }
 
@@ -302,6 +317,12 @@ impl CPU {
             0x30 => self.bmi(),
             // BNE
             0xD0 => self.bne(),
+            // BPL
+            0x10 => self.bpl(),
+            // BRK
+            0x00 => return false,
+            // BVC
+            0x70 => self.bvs(),
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
@@ -314,8 +335,6 @@ impl CPU {
             0xAA => self.tax(),
             // INX
             0xE8 => self.inx(),
-            // BRK
-            0x00 => return false,
             _ => todo!(
                 "Opcode at address {:#01x} not implemented: {:#01x}",
                 self.program_counter,
@@ -389,8 +408,9 @@ impl CPU {
 
         let (sum, overflowed) = self.register_a.overflowing_add(value);
 
-        self.register_a = sum;
         self.set_carry(overflowed);
+        self.set_overflow_from_value(value, sum);
+        self.register_a = sum;
         self.set_zero_and_negative(self.register_a);
     }
 
@@ -463,6 +483,14 @@ impl CPU {
     // Branch if not equal
     fn bne(&mut self) {
         self.branch(self.get_flag(CpuFlags::ZERO), &AddressingMode::Immediate);
+    }
+
+    fn bpl(&mut self) {
+        self.branch(self.get_flag(CpuFlags::NEGATIVE), &AddressingMode::Immediate);
+    }
+
+    fn bvs(&mut self) {
+        self.branch(!self.get_flag(CpuFlags::OVERFLOW), &AddressingMode::Immediate);
     }
 
     // Set register a opcode
@@ -598,7 +626,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::CARRY));
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
-        // TODO: OVERFLOW FLAG
+        assert!(!cpu.get_flag(CpuFlags::OVERFLOW));
     }
 
     #[test]
@@ -610,7 +638,6 @@ mod test {
         // Overflow occurred
         assert!(cpu.get_flag(CpuFlags::CARRY));
         assert!(!cpu.get_flag(CpuFlags::ZERO));
-        // assert!(cpu.get_flag(CpuFlags::OVERFLOW)); // TODO: OVERFLOW FLAG
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
@@ -731,5 +758,19 @@ mod test {
         let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0xD0, 0xEE, 0x69, 0x15, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]));
 
         assert_eq!(cpu.register_a, 0x15);
+    }
+
+    #[test]
+    fn test_bpl_does_not_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x10, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+
+        assert_eq!(cpu.register_a, 0xFF);
+    }
+
+    #[test]
+    fn test_bpl_does_branch() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x0F, 0x10, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+
+        assert_eq!(cpu.register_a, 0x0F+0x10);
     }
 }
