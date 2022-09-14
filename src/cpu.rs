@@ -1,5 +1,3 @@
-use std::fmt::Error;
-
 use crate::{
     addressing_mode::AddressingMode,
     opcode::{OpCode, OPCODES_MAP},
@@ -90,7 +88,14 @@ trait Flags {
         let bit: bool = match n {
             0 => self.mask(value, CpuFlags::CARRY, LogicalOperator::AND, false) != 0,
             1 => self.mask(value, CpuFlags::ZERO, LogicalOperator::AND, false) != 0,
-            2 => self.mask(value, CpuFlags::INTERRUPT_DISABLE, LogicalOperator::AND, false) != 0,
+            2 => {
+                self.mask(
+                    value,
+                    CpuFlags::INTERRUPT_DISABLE,
+                    LogicalOperator::AND,
+                    false,
+                ) != 0
+            }
             3 => self.mask(value, CpuFlags::DECIMAL_MODE, LogicalOperator::AND, false) != 0,
             4 => self.mask(value, CpuFlags::BREAK, LogicalOperator::AND, false) != 0,
             5 => self.mask(value, CpuFlags::BREAK2, LogicalOperator::AND, false) != 0,
@@ -109,21 +114,30 @@ trait Flags {
     fn is_carry(&self, value: u8) -> bool;
     fn set_carry(&mut self, value: bool);
     fn set_carry_from_value(&mut self, value: u8);
-
     // ZERO
     fn is_zero(&self, value: u8) -> bool;
     fn set_zero(&mut self, value: bool);
     fn set_zero_from_value(&mut self, value: u8);
-
     // INTERUPT_DISABLE
+    fn is_interupt_disable(&self, value: u8) -> bool;
+    fn set_interupt_disable(&mut self, value: bool);
+    fn set_interupt_disable_from_value(&mut self, value: u8);
     // DECIMAL MODE
+    fn is_decimal(&self, value: u8) -> bool;
+    fn set_decimal(&mut self, value: bool);
+    fn set_decimal_from_value(&mut self, value: u8);
     // BREAK
+    fn is_break(&self, value: u8) -> bool;
+    fn set_break(&mut self, value: bool);
+    fn set_break_from_value(&mut self, value: u8);
     // BREAK2
+    fn is_break2(&self, value: u8) -> bool;
+    fn set_break2(&mut self, value: bool);
+    fn set_break2_from_value(&mut self, value: u8);
     // OVERFLOW
     fn is_overflow(&self, value: u16) -> bool;
     fn set_overflow(&mut self, value: bool);
     fn set_overflow_from_value(&mut self, value: u8, result: u8);
-
     // NEGATIVE
     fn is_negative(&self, value: u8) -> bool;
     fn set_negative(&mut self, value: bool);
@@ -175,9 +189,57 @@ impl Flags for CPU {
     }
 
     // INTERUPT_DISABLE
+    fn is_interupt_disable(&self, _value: u8) -> bool {
+        todo!();
+    }
+
+    fn set_interupt_disable(&mut self, value: bool) {
+        self.set_flag(value, CpuFlags::INTERRUPT_DISABLE);
+    }
+
+    fn set_interupt_disable_from_value(&mut self, _value: u8) {
+        todo!();
+    }
+
     // DECIMAL MODE
+    fn is_decimal(&self, _value: u8) -> bool {
+        todo!();
+    }
+
+    fn set_decimal(&mut self, value: bool) {
+        self.set_flag(value, CpuFlags::DECIMAL_MODE);
+    }
+
+    fn set_decimal_from_value(&mut self, _value: u8) {
+        todo!();
+    }
+
     // BREAK
+    fn is_break(&self, _value: u8) -> bool {
+        todo!();
+    }
+
+    fn set_break(&mut self, _value: bool) {
+        todo!();
+    }
+
+    fn set_break_from_value(&mut self, _value: u8) {
+        todo!();
+    }
+
     // BREAK2
+    fn is_break2(&self, _value: u8) -> bool {
+        todo!();
+    }
+
+    fn set_break2(&mut self, _value: bool) {
+        todo!();
+    }
+
+    fn set_break2_from_value(&mut self, _value: u8) {
+        todo!();
+    }
+
     // OVERFLOW
     fn is_overflow(&self, value: u16) -> bool {
         return value > u8::MAX as u16;
@@ -192,10 +254,12 @@ impl Flags for CPU {
         let n = value;
         let c = result;
 
-        let left_inner = !(self.get_bit_at_n_u8(m, 7).unwrap() | self.get_bit_at_n_u8(n, 7).unwrap());
+        let left_inner =
+            !(self.get_bit_at_n_u8(m, 7).unwrap() | self.get_bit_at_n_u8(n, 7).unwrap());
         let left = left_inner & self.get_bit_at_n_u8(c, 6).unwrap();
 
-        let right_inner = !(self.get_bit_at_n_u8(m, 7).unwrap() | self.get_bit_at_n_u8(n, 7).unwrap());
+        let right_inner =
+            !(self.get_bit_at_n_u8(m, 7).unwrap() | self.get_bit_at_n_u8(n, 7).unwrap());
         let right = !(right_inner | self.get_bit_at_n_u8(c, 6).unwrap());
 
         let formula = !(!(left | right));
@@ -310,9 +374,7 @@ impl CPU {
             // BEQ
             0xF0 => self.beq(),
             // BIT
-            0x24 | 0x2C => {
-                self.bit(&opcode.mode)
-            }
+            0x24 | 0x2C => self.bit(&opcode.mode),
             // BMI
             0x30 => self.bmi(),
             // BNE
@@ -323,6 +385,18 @@ impl CPU {
             0x00 => return false,
             // BVC
             0x70 => self.bvs(),
+            // CLC
+            0x18 => self.clc(),
+            // CLD
+            0xD8 => self.cld(),
+            // CLI
+            0x58 => self.cli(),
+            // CLV
+            0xB8 => self.clv(),
+            // CMP
+            0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD| 0xD9 | 0xC1 | 0xD1 => {
+                self.cmp(&opcode.mode);
+            }
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
@@ -463,8 +537,7 @@ impl CPU {
     }
 
     // Bit test
-    fn bit(&mut self, mode: &AddressingMode)
-    {
+    fn bit(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
         let value = self.mem_read(address);
 
@@ -477,7 +550,10 @@ impl CPU {
 
     // Branch if minus
     fn bmi(&mut self) {
-        self.branch(!self.get_flag(CpuFlags::NEGATIVE), &AddressingMode::Immediate);
+        self.branch(
+            !self.get_flag(CpuFlags::NEGATIVE),
+            &AddressingMode::Immediate,
+        );
     }
 
     // Branch if not equal
@@ -486,11 +562,42 @@ impl CPU {
     }
 
     fn bpl(&mut self) {
-        self.branch(self.get_flag(CpuFlags::NEGATIVE), &AddressingMode::Immediate);
+        self.branch(
+            self.get_flag(CpuFlags::NEGATIVE),
+            &AddressingMode::Immediate,
+        );
     }
 
     fn bvs(&mut self) {
-        self.branch(!self.get_flag(CpuFlags::OVERFLOW), &AddressingMode::Immediate);
+        self.branch(
+            !self.get_flag(CpuFlags::OVERFLOW),
+            &AddressingMode::Immediate,
+        );
+    }
+
+    fn clc(&mut self) {
+        self.set_carry(false);
+    }
+
+    fn cld(&mut self) {
+        self.set_decimal(false);
+    }
+
+    fn cli(&mut self) {
+        self.set_interupt_disable(false);
+    }
+
+    fn clv(&mut self) {
+        self.set_overflow(false);
+    }
+
+    fn cmp(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.set_carry(self.register_a >= value);
+        self.set_zero(self.register_a == value);
+        self.set_negative((self.register_a.wrapping_sub(value)) & 0b1000_0000 != 0);
     }
 
     // Set register a opcode
@@ -672,49 +779,70 @@ mod test {
 
     #[test]
     fn test_bcc_does_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x10, 0x90, 0xEE, 0x00], Some(vec![(0x80F1, 0x0A), (0x80F2, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x10, 0x90, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x0A), (0x80F2, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, 0x10 << 1);
     }
 
     #[test]
     fn test_bcc_does_not_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x69, 0x10, 0x90, 0xEE, 0x00], Some(vec![(0x80F1, 0x0A), (0x80F2, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0xFF, 0x69, 0x10, 0x90, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x0A), (0x80F2, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10));
     }
 
     #[test]
     fn test_bcs_does_not_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x10, 0xB0, 0xEE, 0x00], Some(vec![(0x80F1, 0x0A), (0x80F2, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x10, 0xB0, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x0A), (0x80F2, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, 0x10);
     }
-    
+
     #[test]
     fn test_bcs_does_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x69, 0x10, 0xB0, 0xEE, 0x00], Some(vec![(0x80F3, 0x0A), (0x80F4, 0x00)]));
-        
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0xFF, 0x69, 0x10, 0xB0, 0xEE, 0x00],
+            Some(vec![(0x80F3, 0x0A), (0x80F4, 0x00)]),
+        );
+
         assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10) << 1);
     }
 
     #[test]
     fn test_beq_does_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0xF0, 0xEE, 0x00], Some(vec![(0x80F1, 0xA9), (0x80F2, 0x69), (0x80F3, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x00, 0xF0, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0xA9), (0x80F2, 0x69), (0x80F3, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, 0x69);
     }
-    
+
     #[test]
     fn test_beq_does_not_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x10, 0x69, 0x10, 0xF0, 0xEE, 0x00], Some(vec![(0x80F3, 0x0A), (0x80F4, 0x00)]));
-        
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x10, 0x69, 0x10, 0xF0, 0xEE, 0x00],
+            Some(vec![(0x80F3, 0x0A), (0x80F4, 0x00)]),
+        );
+
         assert_eq!(cpu.register_a, (0x10 as u8).wrapping_add(0x10));
     }
 
     #[test]
     fn test_bit_test_is_zero() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_1010, 0x24, 0xEE, 0x00], Some(vec![(0xEE, 0b0101_0101)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0b1010_1010, 0x24, 0xEE, 0x00],
+            Some(vec![(0xEE, 0b0101_0101)]),
+        );
 
         assert!(cpu.get_flag(CpuFlags::ZERO));
 
@@ -724,7 +852,10 @@ mod test {
 
     #[test]
     fn test_bit_test_is_not_zero() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_1010, 0x24, 0xEE, 0x00], Some(vec![(0xEE, 0b0101_1010)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0b1010_1010, 0x24, 0xEE, 0x00],
+            Some(vec![(0xEE, 0b0101_1010)]),
+        );
 
         assert!(!cpu.get_flag(CpuFlags::ZERO));
 
@@ -734,43 +865,109 @@ mod test {
 
     #[test]
     fn test_bmi_does_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x30, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0xFF, 0x30, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10));
     }
 
     #[test]
     fn test_bmi_does_not_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x0F, 0x30, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x0F, 0x30, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, 0x0F);
     }
 
     #[test]
     fn test_bne_does_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x01, 0xD0, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x01, 0xD0, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]),
+        );
 
         assert_eq!(cpu.register_a, 0x01 + 0x69);
     }
 
     #[test]
     fn test_bne_does_not_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0xD0, 0xEE, 0x69, 0x15, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x00, 0xD0, 0xEE, 0x69, 0x15, 0x00],
+            Some(vec![(0x80F1, 0x69), (0x80F2, 0x69)]),
+        );
 
         assert_eq!(cpu.register_a, 0x15);
     }
 
     #[test]
     fn test_bpl_does_not_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x10, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0xFF, 0x10, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]),
+        );
 
         assert_eq!(cpu.register_a, 0xFF);
     }
 
     #[test]
     fn test_bpl_does_branch() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x0F, 0x10, 0xEE, 0x00], Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x0F, 0x10, 0xEE, 0x00],
+            Some(vec![(0x80F1, 0x69), (0x80F2, 0x10), (0x80F3, 0x00)]),
+        );
 
-        assert_eq!(cpu.register_a, 0x0F+0x10);
+        assert_eq!(cpu.register_a, 0x0F + 0x10);
+    }
+
+    #[test]
+    fn test_cmp_a_and_value_equal() {
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x69, 0xC9, 0x69],
+            None
+        );
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_cmp_a_bigger_than_value() {
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x69, 0xC9, 0x13],
+            None
+        );
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_cmp_a_smaller_than_value() {
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x69, 0xC9, 0xFF],
+            None
+        );
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_cmp_neg_flag_set() {
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0xFF, 0xC9, 0x0F],
+            None
+        );
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 }
