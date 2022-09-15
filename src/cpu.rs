@@ -25,6 +25,13 @@ enum LogicalOperator {
     // XOR,
 }
 
+enum Register {
+    A,
+    X,
+    Y,
+    Memory,
+}
+
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
@@ -384,6 +391,8 @@ impl CPU {
             // BRK
             0x00 => return false,
             // BVC
+            0x50 => self.bvc(),
+            // BVS
             0x70 => self.bvs(),
             // CLC
             0x18 => self.clc(),
@@ -394,9 +403,25 @@ impl CPU {
             // CLV
             0xB8 => self.clv(),
             // CMP
-            0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD| 0xD9 | 0xC1 | 0xD1 => {
+            0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
                 self.cmp(&opcode.mode);
             }
+            // CPX
+            0xE0 | 0xE4 | 0xEC => {
+                self.cpx(&opcode.mode);
+            }
+            // CPY
+            0xC0 | 0xC4 | 0xCC => {
+                self.cpy(&opcode.mode);
+            }
+            // DEC
+            0xC6 | 0xD6 | 0xCE | 0xDE => {
+                self.dec(&opcode.mode);
+            }
+            // DEX
+            0xCA => self.dex(),
+            // DEY
+            0x88 => self.dey(),
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
@@ -472,6 +497,51 @@ impl CPU {
         let value = self.mem_read(address);
 
         self.program_counter += value as u16;
+    }
+
+    fn comparison(&mut self, register: Register, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        let reg = match register {
+            Register::A => self.register_a,
+            Register::X => self.register_x,
+            Register::Y => self.register_y,
+            Register::Memory => panic!("NO!"),
+        };
+        self.set_carry(reg >= value);
+        self.set_zero(reg == value);
+        self.set_negative((reg.wrapping_sub(value)) & 0b1000_0000 != 0);
+    }
+
+    fn decrement(&mut self, register: Register, mode: &AddressingMode) {
+        match register {
+            Register::A => self.register_a -= 1,
+            Register::X => self.register_x -= 1,
+            Register::Y => self.register_y -= 1,
+            Register::Memory => {
+                let address = self.get_operand_address(mode);
+                let value = self.mem_read(address);
+
+                let result = value.wrapping_sub(1);
+
+                self.mem_write(address, result);
+
+                self.set_zero(result == 0);
+                self.set_negative(result & 0b1000_0000 != 0);
+                return;
+            }
+        };
+
+        let result = match register {
+            Register::A => self.register_a,
+            Register::X => self.register_x,
+            Register::Y => self.register_y,
+            Register::Memory => panic!("HOW DID YOU GET HERE!?!"),
+        };
+
+        self.set_zero(result == 0);
+        self.set_negative(result & 0b1000_0000 != 0);
     }
 
     // OPERATIONS
@@ -561,6 +631,7 @@ impl CPU {
         self.branch(self.get_flag(CpuFlags::ZERO), &AddressingMode::Immediate);
     }
 
+    // Branch if positive
     fn bpl(&mut self) {
         self.branch(
             self.get_flag(CpuFlags::NEGATIVE),
@@ -568,6 +639,15 @@ impl CPU {
         );
     }
 
+    // Branch if overflow clear
+    fn bvc(&mut self) {
+        self.branch(
+            self.get_flag(CpuFlags::OVERFLOW),
+            &AddressingMode::Immediate,
+        );
+    }
+
+    // Branch if overflow set
     fn bvs(&mut self) {
         self.branch(
             !self.get_flag(CpuFlags::OVERFLOW),
@@ -575,29 +655,51 @@ impl CPU {
         );
     }
 
+    // Clear carry flag
     fn clc(&mut self) {
         self.set_carry(false);
     }
 
+    // Clear decimal mode
     fn cld(&mut self) {
         self.set_decimal(false);
     }
 
+    // Clear interrupt disable
     fn cli(&mut self) {
         self.set_interupt_disable(false);
     }
 
+    // Clear overflow flag
     fn clv(&mut self) {
         self.set_overflow(false);
     }
 
+    // Compare
     fn cmp(&mut self, mode: &AddressingMode) {
-        let address = self.get_operand_address(mode);
-        let value = self.mem_read(address);
+        self.comparison(Register::A, mode);
+    }
 
-        self.set_carry(self.register_a >= value);
-        self.set_zero(self.register_a == value);
-        self.set_negative((self.register_a.wrapping_sub(value)) & 0b1000_0000 != 0);
+    // Compare x register
+    fn cpx(&mut self, mode: &AddressingMode) {
+        self.comparison(Register::X, mode);
+    }
+
+    // Compare y register
+    fn cpy(&mut self, mode: &AddressingMode) {
+        self.comparison(Register::Y, mode);
+    }
+
+    fn dec(&mut self, mode: &AddressingMode) {
+        self.decrement(Register::Memory, mode);
+    }
+
+    fn dex(&mut self) {
+        self.decrement(Register::X, &AddressingMode::NoneAddressing);
+    }
+
+    fn dey(&mut self) {
+        self.decrement(Register::Y, &AddressingMode::NoneAddressing);
     }
 
     // Set register a opcode
@@ -609,6 +711,7 @@ impl CPU {
         self.set_zero_and_negative(self.register_a);
     }
 
+    // Store accumulator
     fn sta(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
         self.mem_write(address, self.register_a);
@@ -925,10 +1028,7 @@ mod test {
 
     #[test]
     fn test_cmp_a_and_value_equal() {
-        let cpu = get_cpu_with_program(
-            vec![0xA9, 0x69, 0xC9, 0x69],
-            None
-        );
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x69], None);
 
         assert!(cpu.get_flag(CpuFlags::ZERO));
         assert!(cpu.get_flag(CpuFlags::CARRY));
@@ -937,10 +1037,7 @@ mod test {
 
     #[test]
     fn test_cmp_a_bigger_than_value() {
-        let cpu = get_cpu_with_program(
-            vec![0xA9, 0x69, 0xC9, 0x13],
-            None
-        );
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x13], None);
 
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(cpu.get_flag(CpuFlags::CARRY));
@@ -949,10 +1046,7 @@ mod test {
 
     #[test]
     fn test_cmp_a_smaller_than_value() {
-        let cpu = get_cpu_with_program(
-            vec![0xA9, 0x69, 0xC9, 0xFF],
-            None
-        );
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0xFF], None);
 
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(!cpu.get_flag(CpuFlags::CARRY));
@@ -961,13 +1055,138 @@ mod test {
 
     #[test]
     fn test_cmp_neg_flag_set() {
-        let cpu = get_cpu_with_program(
-            vec![0xA9, 0xFF, 0xC9, 0x0F],
-            None
-        );
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xC9, 0x0F], None);
 
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(cpu.get_flag(CpuFlags::CARRY));
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
+
+    // TODO: IMPLEMENT AFTER LDX
+    //#[test]
+    fn _test_cpx_x_and_value_equal() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x69], None);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    // #[test]
+    fn _test_cpx_x_bigger_than_value() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x13], None);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    //#[test]
+    fn _test_cpx_x_smaller_than_value() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0xFF], None);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    //#[test]
+    fn _test_cpx_neg_flag_set() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xC9, 0x0F], None);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    //#[test]
+    fn _test_cpy_y_and_value_equal() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x69], None);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    // #[test]
+    fn _test_cpy_y_bigger_than_value() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x13], None);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    //#[test]
+    fn _test_cpy_y_smaller_than_value() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0xFF], None);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT AFTER LDX
+    //#[test]
+    fn _test_cpy_neg_flag_set() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xC9, 0x0F], None);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_dec_zp_decrements() {
+        let cpu = get_cpu_with_program(vec![0xC6, 0xEE], Some(vec![(0xEE, 0xFF)]));
+
+        assert_eq!(cpu.mem_read(0xEE), 0xFE);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_dec_zp_result_zero() {
+        let cpu = get_cpu_with_program(vec![0xC6, 0xEE], Some(vec![(0xEE, 0x01)]));
+
+        assert_eq!(cpu.mem_read(0xEE), 0x00);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_dex_zp_decrements() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xAA, 0xCA], None);
+
+        assert_eq!(cpu.register_x, 0xFE);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_dex_zp_result_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x01, 0xAA, 0xCA], None);
+
+        assert_eq!(cpu.register_x, 0x00);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // TODO: IMPLEMENT WHEN Y REGISTER HAS A FUNCTION
+    //#[test]
+    fn _test_dey_zp_decrements() {}
+
+    // TODO: IMPLEMENT WHEN Y REGISTER HAS A FUNCTION
+    //#[test]
+    fn _test_dey_zp_result_zero() {}
 }
