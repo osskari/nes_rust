@@ -422,6 +422,14 @@ impl CPU {
             0xCA => self.dex(),
             // DEY
             0x88 => self.dey(),
+            // EOR
+            0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
+                self.eor(&opcode.mode);
+            }
+            // INC
+            0xE6 | 0xF6 | 0xEE | 0xFE => {
+                self.inc(&opcode.mode);
+            }
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
@@ -512,6 +520,36 @@ impl CPU {
         self.set_carry(reg >= value);
         self.set_zero(reg == value);
         self.set_negative((reg.wrapping_sub(value)) & 0b1000_0000 != 0);
+    }
+
+    fn increment(&mut self, register: Register, mode: &AddressingMode) {
+        match register {
+            Register::A => self.register_a += 1,
+            Register::X => self.register_x += 1,
+            Register::Y => self.register_y += 1,
+            Register::Memory => {
+                let address = self.get_operand_address(mode);
+                let value = self.mem_read(address);
+
+                let result = value.wrapping_add(1);
+
+                self.mem_write(address, result);
+
+                self.set_zero(result == 0);
+                self.set_negative(result & 0b1000_0000 != 0);
+                return;
+            }
+        };
+
+        let result = match register {
+            Register::A => self.register_a,
+            Register::X => self.register_x,
+            Register::Y => self.register_y,
+            Register::Memory => panic!("HOW DID YOU GET HERE!?!"),
+        };
+
+        self.set_zero(result == 0);
+        self.set_negative(result & 0b1000_0000 != 0);
     }
 
     fn decrement(&mut self, register: Register, mode: &AddressingMode) {
@@ -690,16 +728,35 @@ impl CPU {
         self.comparison(Register::Y, mode);
     }
 
+    // Decrement memory
     fn dec(&mut self, mode: &AddressingMode) {
         self.decrement(Register::Memory, mode);
     }
 
+    // Decrement x register
     fn dex(&mut self) {
         self.decrement(Register::X, &AddressingMode::NoneAddressing);
     }
 
+    // Decrement y register
     fn dey(&mut self) {
         self.decrement(Register::Y, &AddressingMode::NoneAddressing);
+    }
+
+    // Exclusive or
+    fn eor(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.register_a ^= value;
+
+        self.set_zero(self.register_a == 0);
+        self.set_negative(self.register_a & 0b1000_0000 != 0);
+    }
+
+    // Increment memory
+    fn inc(&mut self, mode: &AddressingMode) {
+        self.increment(Register::Memory, mode);
     }
 
     // Set register a opcode
@@ -739,10 +796,10 @@ impl CPU {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::vec;
 
-    use super::*;
-
+    // HELPERS
     fn get_cpu_with_program(program: Vec<u8>, mem_write: Option<Vec<(u16, u8)>>) -> CPU {
         let mut cpu = CPU::new();
         match mem_write {
@@ -757,6 +814,7 @@ mod test {
         return cpu;
     }
 
+    // LDA
     #[test]
     fn test_lda_immidiate_load_data() {
         let cpu = get_cpu_with_program(vec![0xA9, 0x05, 0x00], None);
@@ -781,6 +839,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // TEX
     #[test]
     fn test_tax_move_a_to_x() {
         let cpu = get_cpu_with_program(vec![0xA9, 0x0A, 0xAA, 0x00], None);
@@ -801,6 +860,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // INX
     #[test]
     fn test_inx_x_does_increment() {
         let cpu = get_cpu_with_program(vec![0xE8, 0x00], None);
@@ -827,6 +887,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    //  ADC
     #[test]
     fn test_adc_adds() {
         let cpu = get_cpu_with_program(vec![0xA9, 0x10, 0x69, 0x15, 0x00], None);
@@ -851,6 +912,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // AND
     #[test]
     fn test_op_and() {
         let cpu = get_cpu_with_program(vec![0xA9, 0x5A, 0x29, 0x33], None);
@@ -860,6 +922,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // ASL
     #[test]
     fn test_asl_shift_no_accum() {
         let cpu = get_cpu_with_program(vec![0xA9, 0x0F, 0x0A], None);
@@ -880,6 +943,7 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // BCC
     #[test]
     fn test_bcc_does_branch() {
         let cpu = get_cpu_with_program(
@@ -900,6 +964,7 @@ mod test {
         assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10));
     }
 
+    // BCS
     #[test]
     fn test_bcs_does_not_branch() {
         let cpu = get_cpu_with_program(
@@ -920,6 +985,7 @@ mod test {
         assert_eq!(cpu.register_a, (0xFF as u8).wrapping_add(0x10) << 1);
     }
 
+    // BEQ
     #[test]
     fn test_beq_does_branch() {
         let cpu = get_cpu_with_program(
@@ -940,6 +1006,7 @@ mod test {
         assert_eq!(cpu.register_a, (0x10 as u8).wrapping_add(0x10));
     }
 
+    // BIT
     #[test]
     fn test_bit_test_is_zero() {
         let cpu = get_cpu_with_program(
@@ -966,6 +1033,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // BMI
     #[test]
     fn test_bmi_does_branch() {
         let cpu = get_cpu_with_program(
@@ -986,6 +1054,7 @@ mod test {
         assert_eq!(cpu.register_a, 0x0F);
     }
 
+    // BNE
     #[test]
     fn test_bne_does_branch() {
         let cpu = get_cpu_with_program(
@@ -1006,6 +1075,7 @@ mod test {
         assert_eq!(cpu.register_a, 0x15);
     }
 
+    // BPL
     #[test]
     fn test_bpl_does_not_branch() {
         let cpu = get_cpu_with_program(
@@ -1026,6 +1096,7 @@ mod test {
         assert_eq!(cpu.register_a, 0x0F + 0x10);
     }
 
+    // CMP
     #[test]
     fn test_cmp_a_and_value_equal() {
         let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0xC9, 0x69], None);
@@ -1062,6 +1133,7 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // CPX
     // TODO: IMPLEMENT AFTER LDX
     //#[test]
     fn _test_cpx_x_and_value_equal() {
@@ -1102,6 +1174,7 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // CPY
     // TODO: IMPLEMENT AFTER LDX
     //#[test]
     fn _test_cpy_y_and_value_equal() {
@@ -1142,6 +1215,7 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // DEC
     #[test]
     fn test_dec_zp_decrements() {
         let cpu = get_cpu_with_program(vec![0xC6, 0xEE], Some(vec![(0xEE, 0xFF)]));
@@ -1162,6 +1236,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // DEX
     #[test]
     fn test_dex_zp_decrements() {
         let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xAA, 0xCA], None);
@@ -1182,6 +1257,7 @@ mod test {
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // DEY
     // TODO: IMPLEMENT WHEN Y REGISTER HAS A FUNCTION
     //#[test]
     fn _test_dey_zp_decrements() {}
@@ -1189,4 +1265,46 @@ mod test {
     // TODO: IMPLEMENT WHEN Y REGISTER HAS A FUNCTION
     //#[test]
     fn _test_dey_zp_result_zero() {}
+
+    // EOR
+    #[test]
+    fn test_eor_should_be_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_0101, 0x49, 0b1010_0101], None);
+
+        assert_eq!(cpu.register_a, 0);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_eor_should_be_negative() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_0101, 0x49, 0b0101_1010], None);
+
+        assert_eq!(cpu.register_a, 0xFF);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // INC
+    #[test]
+    fn test_inc_is_zero() {
+        let cpu = get_cpu_with_program(vec![0xE6, 0xEE], Some(vec![(0xEE, 0xFF)]));
+
+        assert_eq!(cpu.mem_read(0xEE), 0x00);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_inc_is_negative() {
+        let cpu = get_cpu_with_program(vec![0xE6, 0xEE], Some(vec![(0xEE, 0xFE)]));
+
+        assert_eq!(cpu.mem_read(0xEE), 0xFF);
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
 }
