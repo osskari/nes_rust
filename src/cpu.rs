@@ -485,6 +485,14 @@ impl CPU {
             0x68 => self.pla(),
             // PLP
             0x28 => self.plp(),
+            // ROL
+            0x2A | 0x26 | 0x36 | 0x2E | 0x3E => {
+                self.rol(&opcode.mode);
+            }
+            // ROR
+            0x6A | 0x66 | 0x76 | 0x6E | 0x7E => {
+                self.ror(&opcode.mode);
+            }
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
@@ -909,7 +917,7 @@ impl CPU {
         self.set_carry(value & 0b0000_0001 != 0);
 
         value >>= 1;
-        println!("VALUE: {:#01x}", value);
+
         if mode == &AddressingMode::NoneAddressing {
             self.register_a = value;
         } else {
@@ -952,6 +960,52 @@ impl CPU {
     // Pull processor status
     fn plp(&mut self) {
         self.status = self.stack_pop();
+    }
+
+    // Rotate left
+    fn rol(&mut self, mode: &AddressingMode) {
+        let mut address = 0;
+        let value = if mode == &AddressingMode::NoneAddressing {
+            self.register_a
+        } else {
+            address = self.get_operand_address(mode);
+            self.mem_read(address)
+        };
+
+        let result = value.rotate_left(1);
+
+        if mode == &AddressingMode::NoneAddressing {
+            self.register_a = result;
+        } else {
+            self.mem_write(address, result);
+        }
+        
+        self.set_carry(value & 0b1000_0000 != 0);
+        self.set_zero(result == 0);
+        self.set_negative(result & 0b1000_0000 != 0);
+    }
+
+    // Rotate right
+    fn ror(&mut self, mode: &AddressingMode) {
+        let mut address = 0;
+        let value = if mode == &AddressingMode::NoneAddressing {
+            self.register_a
+        } else {
+            address = self.get_operand_address(mode);
+            self.mem_read(address)
+        };
+
+        let result = value.rotate_right(1);
+
+        if mode == &AddressingMode::NoneAddressing {
+            self.register_a = result;
+        } else {
+            self.mem_write(address, result);
+        }
+
+        self.set_carry(value & 0b0000_0001 != 0);
+        self.set_zero(result == 0);
+        self.set_negative(result & 0b1000_0000 != 0);
     }
 
     // Store accumulator
@@ -1654,6 +1708,7 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
+    // PLP
     #[test]
     fn test_plp_pulls_status() {
         let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x48, 0x28], None);
@@ -1665,6 +1720,28 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::BREAK));
         assert!(cpu.get_flag(CpuFlags::BREAK2));
         assert!(cpu.get_flag(CpuFlags::OVERFLOW));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // ROL
+    #[test]
+    fn test_rol_rotates() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0x2A], None);
+
+        assert_eq!(cpu.register_a, 0xD2);
+        assert!(!cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // ROR
+    #[test]
+    fn test_ror_rotates() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0x6A], None);
+
+        assert_eq!(cpu.register_a, 0xB4);
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 }
