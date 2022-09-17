@@ -375,7 +375,10 @@ impl CPU {
     }
 
     fn run_instruction(&mut self, opcode: &OpCode) -> bool {
-        println!("OP: {}, PC: {:#01x}", opcode.name, self.program_counter);
+        println!(
+            "OP: {}, PC: {:#01x}, A: {:#02x}, X: {:#02x}, Y: {:#02x}",
+            opcode.name, self.program_counter-1, self.register_a, self.register_x, self.register_y
+        );
         match opcode.opcode {
             // ADC
             0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
@@ -493,6 +496,9 @@ impl CPU {
             0x6A | 0x66 | 0x76 | 0x6E | 0x7E => {
                 self.ror(&opcode.mode);
             }
+            // RTI
+            0x40 => self.rti(),
+            0x60 => self.rts(),
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
@@ -868,7 +874,7 @@ impl CPU {
         let address = self.get_operand_address(&AddressingMode::Absolute);
         let value = self.mem_read_u16(address);
 
-        self.stack_push_u16(self.program_counter + 1);
+        self.stack_push_u16(self.program_counter + 2);
         self.program_counter = value;
     }
 
@@ -979,7 +985,7 @@ impl CPU {
         } else {
             self.mem_write(address, result);
         }
-        
+
         self.set_carry(value & 0b1000_0000 != 0);
         self.set_zero(result == 0);
         self.set_negative(result & 0b1000_0000 != 0);
@@ -1006,6 +1012,17 @@ impl CPU {
         self.set_carry(value & 0b0000_0001 != 0);
         self.set_zero(result == 0);
         self.set_negative(result & 0b1000_0000 != 0);
+    }
+
+    // Return from interrupt
+    fn rti(&mut self) {
+        self.status = self.stack_pop();
+        self.program_counter = self.stack_pop_u16();
+    }
+
+    // Return from subroutine
+    fn rts(&mut self) {
+        self.program_counter = self.stack_pop_u16();
     }
 
     // Store accumulator
@@ -1743,5 +1760,24 @@ mod test {
         assert!(cpu.get_flag(CpuFlags::CARRY));
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // RTI
+    // TODO: TEST THIS
+
+    // RTS
+    #[test]
+    fn test_rts_here_and_back() {
+        let cpu = get_cpu_with_program(
+            vec![0xA2, 0x67, 0x20, 0xAA, 0xAA, 0xE8],
+            Some(vec![
+                (0xAAAA, 0xBB),
+                (0xAAAB, 0xBB),
+                (0xBBBB, 0xE8),
+                (0xBBBC, 0x60),
+            ]),
+        );
+
+        assert_eq!(cpu.register_x, 0x69);
     }
 }
