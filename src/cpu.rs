@@ -467,6 +467,16 @@ impl CPU {
             0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
                 self.ldy(&opcode.mode);
             }
+            // LSR
+            0x4A | 0x46 | 0x56 | 0x4E | 0x5E => {
+                self.lsr(&opcode.mode);
+            }
+            // No operation
+            0xEA => {}
+            // Logical inclusive or
+            0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
+                self.ora(&opcode.mode);
+            }
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
@@ -876,6 +886,42 @@ impl CPU {
 
         self.set_zero(value == 0);
         self.set_negative(value & 0b1000_0000 != 0);
+    }
+
+    // Logical shift right
+    fn lsr(&mut self, mode: &AddressingMode) {
+        let mut address: u16 = 0;
+
+        let mut value: u8 = if mode == &AddressingMode::NoneAddressing {
+            self.register_a
+        } else {
+            address = self.get_operand_address(mode);
+            self.mem_read(address)
+        };
+
+        self.set_carry(value & 0b0000_0001 != 0);
+
+        value >>= 1;
+        println!("VALUE: {:#01x}", value);
+        if mode == &AddressingMode::NoneAddressing {
+            self.register_a = value;
+        } else {
+            self.mem_write(address, value);
+        }
+
+        self.set_zero(value == 0);
+        self.set_negative(value & 0b1000_0000 != 0);
+    }
+
+    // Logical inclusive or
+    fn ora(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.register_a |= value;
+
+        self.set_zero(self.register_a == 0);
+        self.set_negative(self.register_a & 0b1000_0000 != 0);
     }
 
     // Store accumulator
@@ -1495,5 +1541,45 @@ mod test {
         assert_eq!(cpu.register_y, 0x55);
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // LSR
+    #[test]
+    fn test_lsr_has_carry_and_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x01, 0x4A], None);
+
+        assert_eq!(cpu.register_a, 0x00);
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_lsr_result_negative() {
+        let cpu = get_cpu_with_program(vec![0x46, 0xEE], Some(vec![(0xEE, 0xF0)]));
+
+        assert_eq!(cpu.mem_read(0xEE), 0xF0 >> 1);
+        assert!(!cpu.get_flag(CpuFlags::CARRY));
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // ORA
+    #[test]
+    fn test_ora_result_is_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0x09, 0x00], None);
+
+        assert_eq!(cpu.register_a, 0x00);
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_ora_result_is_negative() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0b1010_0101, 0x09, 0b1111_0000], None);
+
+        assert_eq!(cpu.register_a, 0b1111_0101);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 }
