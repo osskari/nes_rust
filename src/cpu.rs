@@ -471,12 +471,20 @@ impl CPU {
             0x4A | 0x46 | 0x56 | 0x4E | 0x5E => {
                 self.lsr(&opcode.mode);
             }
-            // No operation
+            // NOP
             0xEA => {}
-            // Logical inclusive or
+            // EOR
             0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
                 self.ora(&opcode.mode);
             }
+            // PHA
+            0x48 => self.pha(),
+            // PHP
+            0x08 => self.php(),
+            // PLA
+            0x68 => self.pla(),
+            // PLP
+            0x28 => self.plp(),
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
@@ -851,7 +859,6 @@ impl CPU {
     fn jsr(&mut self) {
         let address = self.get_operand_address(&AddressingMode::Absolute);
         let value = self.mem_read_u16(address);
-        println!("VALUE: {:#01x}", value);
 
         self.stack_push_u16(self.program_counter + 1);
         self.program_counter = value;
@@ -922,6 +929,29 @@ impl CPU {
 
         self.set_zero(self.register_a == 0);
         self.set_negative(self.register_a & 0b1000_0000 != 0);
+    }
+
+    // Push accumulator
+    fn pha(&mut self) {
+        self.stack_push(self.register_a);
+    }
+
+    // Push processor status
+    fn php(&mut self) {
+        self.stack_push(self.status);
+    }
+
+    // Pull accumulator
+    fn pla(&mut self) {
+        self.register_a = self.stack_pop();
+
+        self.set_zero(self.register_a == 0);
+        self.set_negative(self.register_a & 0b1000_0000 != 0);
+    }
+
+    // Pull processor status
+    fn plp(&mut self) {
+        self.status = self.stack_pop();
     }
 
     // Store accumulator
@@ -1580,6 +1610,61 @@ mod test {
 
         assert_eq!(cpu.register_a, 0b1111_0101);
         assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // PHA
+    #[test]
+    fn test_pha_pushes_a() {
+        let mut cpu = get_cpu_with_program(vec![0xA9, 0x69, 0x48], None);
+
+        assert_eq!(cpu.stack_pop(), 0x69);
+    }
+
+    // PHP
+    #[test]
+    fn test_php_pushes_status() {
+        let mut cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x08, 0xA9, 0x00], None);
+
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+
+        cpu.status = cpu.stack_pop();
+
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // PLA
+    #[test]
+    fn test_pla_is_zero() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0x48, 0xA9, 0x69, 0x68], None);
+
+        assert_eq!(cpu.register_a, 0);
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_pla_is_negative() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x48, 0xA9, 0x69, 0x68], None);
+
+        assert_eq!(cpu.register_a, 0xFF);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_plp_pulls_status() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0x48, 0x28], None);
+
+        assert!(cpu.get_flag(CpuFlags::CARRY));
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(cpu.get_flag(CpuFlags::INTERRUPT_DISABLE));
+        assert!(cpu.get_flag(CpuFlags::DECIMAL_MODE));
+        assert!(cpu.get_flag(CpuFlags::BREAK));
+        assert!(cpu.get_flag(CpuFlags::BREAK2));
+        assert!(cpu.get_flag(CpuFlags::OVERFLOW));
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
     }
 }
