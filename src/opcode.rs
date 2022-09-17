@@ -183,6 +183,10 @@ lazy_static! {
         OpCode::new(0xE1, "SBC", 2, 6, AddressingMode::Indirect_X),
         OpCode::new(0xF1, "SBC", 2, 5, AddressingMode::Indirect_Y),
 
+        OpCode::new(0x38, "SEC", 1, 2, AddressingMode::NoneAddressing),
+        OpCode::new(0xF8, "SED", 1, 2, AddressingMode::NoneAddressing),
+        OpCode::new(0x78, "SEI", 1, 2, AddressingMode::NoneAddressing),
+
         OpCode::new(0x85, "STA", 2, 3, AddressingMode::ZeroPage),
         OpCode::new(0x95, "STA", 2, 4, AddressingMode::ZeroPage_X),
         OpCode::new(0x8D, "STA", 3, 4, AddressingMode::Absolute),

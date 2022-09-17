@@ -508,6 +508,12 @@ impl CPU {
             0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
                 self.sbc(&opcode.mode);
             }
+            // SEC
+            0x38 => self.sec(),
+            // SED
+            0xF8 => self.sed(),
+            // SEI
+            0x78 => self.sei(),
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
@@ -1049,6 +1055,21 @@ impl CPU {
 
         self.set_carry(!overflow);
         self.set_zero(self.register_a == 0);
+    }
+
+    // Set carry flag
+    fn sec(&mut self) {
+        self.set_carry(true);
+    }
+
+    // Set decimal flag
+    fn sed(&mut self) {
+        self.set_decimal(true);
+    }
+
+    // Set decimal flag
+    fn sei(&mut self) {
+        self.set_interupt_disable(true);
     }
 
     // Store accumulator
