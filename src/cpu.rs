@@ -377,7 +377,11 @@ impl CPU {
     fn run_instruction(&mut self, opcode: &OpCode) -> bool {
         println!(
             "OP: {}, PC: {:#01x}, A: {:#02x}, X: {:#02x}, Y: {:#02x}",
-            opcode.name, self.program_counter-1, self.register_a, self.register_x, self.register_y
+            opcode.name,
+            self.program_counter - 1,
+            self.register_a,
+            self.register_x,
+            self.register_y
         );
         match opcode.opcode {
             // ADC
@@ -498,7 +502,12 @@ impl CPU {
             }
             // RTI
             0x40 => self.rti(),
+            // RTS
             0x60 => self.rts(),
+            // SBC
+            0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
+                self.sbc(&opcode.mode);
+            }
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
@@ -1023,6 +1032,23 @@ impl CPU {
     // Return from subroutine
     fn rts(&mut self) {
         self.program_counter = self.stack_pop_u16();
+    }
+
+    // Subtract with carry
+    fn sbc(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        let carry: u8 = if self.get_flag(CpuFlags::CARRY) { 0 } else { 1 };
+
+        let (result, overflow) = self.register_a.overflowing_sub(value.wrapping_sub(carry));
+
+        self.set_overflow_from_value(self.register_a, result);
+
+        self.register_a = result;
+
+        self.set_carry(!overflow);
+        self.set_zero(self.register_a == 0);
     }
 
     // Store accumulator
@@ -1779,5 +1805,12 @@ mod test {
         );
 
         assert_eq!(cpu.register_x, 0x69);
+    }
+
+    #[test]
+    fn test_sbc_overflows() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0xE9, 0x10], None);
+
+        assert_eq!(cpu.register_a, (0x00 as u8).wrapping_sub(0x0F));
     }
 }
