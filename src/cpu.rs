@@ -332,7 +332,18 @@ impl CPU {
                 let address = base.wrapping_add(self.register_y as u16);
                 return address;
             }
+            
+            AddressingMode::Indirect => {
+                let base = self.mem_read_u16(self.program_counter);
 
+                if base & 0x00FF == 0x00FF {
+                    let low = self.mem_read(base);
+                    let high = self.mem_read(base);
+                    return (high as u16) << 8 | (low as u16);
+                } else {
+                    return self.mem_read_u16(base);
+                };
+            }
             AddressingMode::Indirect_X => {
                 let base = self.mem_read(self.program_counter);
 
@@ -430,6 +441,14 @@ impl CPU {
             0xE6 | 0xF6 | 0xEE | 0xFE => {
                 self.inc(&opcode.mode);
             }
+            // INX
+            0xE8 => self.inx(),
+            // INY
+            0xC8 => self.iny(),
+            // JMP
+            0x4C | 0x6C => {
+                self.jmp(&opcode.mode);
+            }
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
@@ -440,8 +459,6 @@ impl CPU {
             }
             // TAX
             0xAA => self.tax(),
-            // INX
-            0xE8 => self.inx(),
             _ => todo!(
                 "Opcode at address {:#01x} not implemented: {:#01x}",
                 self.program_counter,
@@ -759,6 +776,30 @@ impl CPU {
         self.increment(Register::Memory, mode);
     }
 
+    // Increment x register
+    fn inx(&mut self) {
+        self.register_x = self.register_x.wrapping_add(1);
+
+        self.set_zero_and_negative(self.register_x);
+    }
+
+    // Increment y register
+    fn iny(&mut self) {
+        self.register_y = self.register_y.wrapping_add(1);
+
+        self.set_zero(self.register_y == 0);
+        self.set_negative(self.register_y & 0b1000_0000 != 0);
+    }
+
+    // Jump
+    fn jmp(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read_u16(address);
+
+        self.program_counter = value;
+        println!("PC VALUE: {:#01x}", self.program_counter);
+    }
+
     // Set register a opcode
     fn lda(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
@@ -777,19 +818,6 @@ impl CPU {
     // Copy a to x opcode
     fn tax(&mut self) {
         self.register_x = self.register_a;
-        self.set_zero_and_negative(self.register_x);
-    }
-
-    // Increment x register opcode
-    fn inx(&mut self) {
-        // Rust panicks on owerflow
-        // NES does not panick,
-        // so we need to handle the overflow manually
-        if self.register_x == u8::MAX {
-            self.register_x = 0;
-        } else {
-            self.register_x += 1;
-        }
         self.set_zero_and_negative(self.register_x);
     }
 }
@@ -857,33 +885,6 @@ mod test {
         assert_eq!(cpu.register_x, 0x00);
 
         assert!(cpu.get_flag(CpuFlags::ZERO));
-        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
-    }
-
-    // INX
-    #[test]
-    fn test_inx_x_does_increment() {
-        let cpu = get_cpu_with_program(vec![0xE8, 0x00], None);
-
-        assert_eq!(cpu.register_x, 1);
-        assert!(!cpu.get_flag(CpuFlags::ZERO));
-        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_5_ops_working_together() {
-        let mut cpu = CPU::new();
-        cpu.load_and_run(vec![0xA9, 0xC0, 0xAA, 0xE8, 0x00]);
-
-        assert_eq!(cpu.register_x, 0xc1);
-    }
-
-    #[test]
-    fn test_inx_overflow() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xAA, 0xE8, 0xE8, 0x00], None);
-
-        assert_eq!(cpu.register_x, 1);
-        assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
@@ -1306,5 +1307,43 @@ mod test {
 
         assert!(!cpu.get_flag(CpuFlags::ZERO));
         assert!(cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // INX
+    #[test]
+    fn test_inx_x_does_increment() {
+        let cpu = get_cpu_with_program(vec![0xE8, 0x00], None);
+
+        assert_eq!(cpu.register_x, 1);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_5_ops_working_together() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xA9, 0xC0, 0xAA, 0xE8, 0x00]);
+
+        assert_eq!(cpu.register_x, 0xc1);
+    }
+
+    #[test]
+    fn test_inx_overflow() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0xFF, 0xAA, 0xE8, 0xE8, 0x00], None);
+
+        assert_eq!(cpu.register_x, 1);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // INY
+    // TODO: TEST THIS
+
+    // JMP
+    #[test]
+    fn test_jmp_to_address() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0x4C, 0xEE, 0x69], Some(vec![(0x69EE, 0xA9), (0x69EF, 0xF1), (0xF1A9, 0xA9), (0xF1AA, 0xF1)]));
+
+        assert_eq!(cpu.register_a, 0xF1);
     }
 }
