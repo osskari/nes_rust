@@ -5,6 +5,8 @@ use crate::{
 
 const PROGRAM_START: u16 = 0x8000;
 const RESET_POINTER: u16 = 0xFFFC;
+const STACK: u16 = 0x0100;
+const STACK_RESET: u8 = 0xFD;
 
 bitflags! {
     pub struct CpuFlags: u8 {
@@ -38,6 +40,7 @@ pub struct CPU {
     pub register_y: u8,
     pub status: u8,
     pub program_counter: u16,
+    pub stack_pointer: u8,
     memory: [u8; 0xFFFF],
 }
 
@@ -301,6 +304,7 @@ impl CPU {
             register_y: 0,
             status: 0,
             program_counter: 0,
+            stack_pointer: STACK_RESET,
             memory: [0; 0xFFFF],
         }
     }
@@ -332,7 +336,7 @@ impl CPU {
                 let address = base.wrapping_add(self.register_y as u16);
                 return address;
             }
-            
+
             AddressingMode::Indirect => {
                 let base = self.mem_read_u16(self.program_counter);
 
@@ -371,7 +375,7 @@ impl CPU {
     }
 
     fn run_instruction(&mut self, opcode: &OpCode) -> bool {
-        println!("RAN OP: {}", opcode.name);
+        println!("OP: {}, PC: {:#01x}", opcode.name, self.program_counter);
         match opcode.opcode {
             // ADC
             0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
@@ -449,9 +453,19 @@ impl CPU {
             0x4C | 0x6C => {
                 self.jmp(&opcode.mode);
             }
+            // JSR
+            0x20 => self.jsr(),
             // LDA
             0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                 self.lda(&opcode.mode);
+            }
+            // LDX
+            0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
+                self.ldx(&opcode.mode);
+            }
+            // LDY
+            0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
+                self.ldy(&opcode.mode);
             }
             // STA
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
@@ -472,7 +486,8 @@ impl CPU {
         self.register_a = 0;
         self.register_x = 0;
         self.register_y = 0;
-        self.status = 0;
+        self.status = 0b100100;
+        self.stack_pointer = STACK_RESET;
 
         self.program_counter = self.mem_read_u16(RESET_POINTER);
     }
@@ -510,6 +525,29 @@ impl CPU {
                 return;
             }
         }
+    }
+
+    fn stack_pop(&mut self) -> u8 {
+        self.stack_pointer = self.stack_pointer.wrapping_add(1);
+        return self.mem_read((STACK as u16) + self.stack_pointer as u16);
+    }
+
+    fn stack_push(&mut self, value: u8) {
+        self.mem_write((STACK as u16) + self.stack_pointer as u16, value);
+        self.stack_pointer = self.stack_pointer.wrapping_sub(1);
+    }
+
+    fn stack_pop_u16(&mut self) -> u16 {
+        let low = self.stack_pop() as u16;
+        let high = self.stack_pop() as u16;
+        return high << 8 | low;
+    }
+
+    fn stack_push_u16(&mut self, value: u16) {
+        let high = (value >> 8) as u8;
+        let low = (value & 0xFF) as u8;
+        self.stack_push(high);
+        self.stack_push(low);
     }
 
     // HELPERS
@@ -797,16 +835,47 @@ impl CPU {
         let value = self.mem_read_u16(address);
 
         self.program_counter = value;
-        println!("PC VALUE: {:#01x}", self.program_counter);
     }
 
-    // Set register a opcode
+    // Jump to subroutine
+    fn jsr(&mut self) {
+        let address = self.get_operand_address(&AddressingMode::Absolute);
+        let value = self.mem_read_u16(address);
+        println!("VALUE: {:#01x}", value);
+
+        self.stack_push_u16(self.program_counter + 1);
+        self.program_counter = value;
+    }
+
+    // Set register a
     fn lda(&mut self, mode: &AddressingMode) {
         let address = self.get_operand_address(mode);
         let value = self.mem_read(address);
 
         self.register_a = value;
         self.set_zero_and_negative(self.register_a);
+    }
+
+    // Set register x
+    fn ldx(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.register_x = value;
+
+        self.set_zero(value == 0);
+        self.set_negative(value & 0b1000_0000 != 0);
+    }
+
+    // Set register y
+    fn ldy(&mut self, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = self.mem_read(address);
+
+        self.register_y = value;
+
+        self.set_zero(value == 0);
+        self.set_negative(value & 0b1000_0000 != 0);
     }
 
     // Store accumulator
@@ -840,31 +909,6 @@ mod test {
         }
         cpu.load_and_run(program);
         return cpu;
-    }
-
-    // LDA
-    #[test]
-    fn test_lda_immidiate_load_data() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x05, 0x00], None);
-
-        assert!(!cpu.get_flag(CpuFlags::ZERO));
-        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_lda_with_zero_flag() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0x00], None);
-        assert!(cpu.get_flag(CpuFlags::ZERO));
-        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_lda_from_memory() {
-        let cpu = get_cpu_with_program(vec![0xA5, 0x10, 0x00], Some(vec![(0x10, 0x55)]));
-
-        assert_eq!(cpu.register_a, 0x55);
-        assert!(!cpu.get_flag(CpuFlags::ZERO));
-        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 
     // TEX
@@ -1342,8 +1386,114 @@ mod test {
     // JMP
     #[test]
     fn test_jmp_to_address() {
-        let cpu = get_cpu_with_program(vec![0xA9, 0x69, 0x4C, 0xEE, 0x69], Some(vec![(0x69EE, 0xA9), (0x69EF, 0xF1), (0xF1A9, 0xA9), (0xF1AA, 0xF1)]));
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x69, 0x4C, 0xEE, 0x69],
+            Some(vec![
+                (0x69EE, 0xA9),
+                (0x69EF, 0xF1),
+                (0xF1A9, 0xA9),
+                (0xF1AA, 0xF1),
+            ]),
+        );
 
         assert_eq!(cpu.register_a, 0xF1);
+    }
+
+    #[test]
+    fn test_jsr_does_jump() {
+        let cpu = get_cpu_with_program(
+            vec![0xA9, 0x69, 0x20, 0xF1, 0xAA, 0xA9, 0x99],
+            Some(vec![
+                (0xAAF1, 0xA9),
+                (0xAAF2, 0x42),
+                (0x42A9, 0xA9),
+                (0x42AA, 0x42),
+            ]),
+        );
+
+        assert_eq!(cpu.register_a, 0x42);
+        assert!(cpu.stack_pointer < STACK_RESET);
+    }
+
+    // LDA
+    #[test]
+    fn test_lda_immidiate_load_data() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x05, 0x00], None);
+
+        assert_eq!(cpu.register_a, 0x05);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_lda_with_zero_flag() {
+        let cpu = get_cpu_with_program(vec![0xA9, 0x00, 0x00], None);
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_lda_from_memory() {
+        let cpu = get_cpu_with_program(vec![0xA5, 0x10, 0x00], Some(vec![(0x10, 0x55)]));
+
+        assert_eq!(cpu.register_a, 0x55);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // LDX
+    #[test]
+    fn test_ldx_immidiate_load_data() {
+        let cpu = get_cpu_with_program(vec![0xA2, 0x05, 0x00], None);
+
+        assert_eq!(cpu.register_x, 0x05);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_ldx_with_zero_flag() {
+        let cpu = get_cpu_with_program(vec![0xA2, 0x00, 0x00], None);
+
+        assert_eq!(cpu.register_x, 0x00);
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_ldx_from_memory() {
+        let cpu = get_cpu_with_program(vec![0xA6, 0x10, 0x00], Some(vec![(0x10, 0x55)]));
+
+        assert_eq!(cpu.register_x, 0x55);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    // LDY
+    #[test]
+    fn test_ldy_immidiate_load_data() {
+        let cpu = get_cpu_with_program(vec![0xA0, 0x05, 0x00], None);
+
+        assert_eq!(cpu.register_y, 0x05);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_ldy_with_zero_flag() {
+        let cpu = get_cpu_with_program(vec![0xA0, 0x00, 0x00], None);
+
+        assert_eq!(cpu.register_y, 0x00);
+        assert!(cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_ldy_from_memory() {
+        let cpu = get_cpu_with_program(vec![0xA4, 0x10, 0x00], Some(vec![(0x10, 0x55)]));
+
+        assert_eq!(cpu.register_y, 0x55);
+        assert!(!cpu.get_flag(CpuFlags::ZERO));
+        assert!(!cpu.get_flag(CpuFlags::NEGATIVE));
     }
 }
