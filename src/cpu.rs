@@ -518,8 +518,27 @@ impl CPU {
             0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => {
                 self.sta(&opcode.mode);
             }
+            // STX
+            0x86 | 0x96 | 0x8E => {
+                self.stx(&opcode.mode);
+            }
+            // STY
+            0x84 | 0x94 | 0x8C => {
+                self.sty(&opcode.mode);
+            }
             // TAX
             0xAA => self.tax(),
+            // TAY
+            0xA8 => self.tay(),
+            // TSX
+            0xBA => self.tsx(),
+            // TXA
+            0x8A => self.txa(),
+            // TXS
+            0x9A => self.txs(),
+            // TYA
+            0x98 => self.tya(),
+
             _ => todo!(
                 "Opcode at address {:#01x} not implemented: {:#01x}",
                 self.program_counter,
@@ -684,6 +703,17 @@ impl CPU {
         self.set_negative(result & 0b1000_0000 != 0);
     }
 
+    fn store_register(&mut self, register: Register, mode: &AddressingMode) {
+        let address = self.get_operand_address(mode);
+        let value = match register {
+            Register::A => self.register_a,
+            Register::X => self.register_x,
+            Register::Y => self.register_y,
+            Register::Memory => panic!("NOT ALLOWED!"),
+        };
+
+        self.mem_write(address, value);
+    }
     // OPERATIONS
     // Add with carry
     fn adc(&mut self, mode: &AddressingMode) {
@@ -1074,14 +1104,52 @@ impl CPU {
 
     // Store accumulator
     fn sta(&mut self, mode: &AddressingMode) {
-        let address = self.get_operand_address(mode);
-        self.mem_write(address, self.register_a);
+        self.store_register(Register::A, mode);
     }
 
-    // Copy a to x opcode
+    // Store x register
+    fn stx(&mut self, mode: &AddressingMode) {
+        self.store_register(Register::X, mode);
+    }
+
+    // Store y register
+    fn sty(&mut self, mode: &AddressingMode) {
+        self.store_register(Register::Y, mode);
+    }
+
+    // Copy a to x
     fn tax(&mut self) {
         self.register_x = self.register_a;
         self.set_zero_and_negative(self.register_x);
+    }
+
+    // Copy a to y
+    fn tay(&mut self) {
+        self.register_y = self.register_a;
+        self.set_zero_and_negative(self.register_y);
+    }
+
+    // Transfer stack pointer to x
+    fn tsx(&mut self) {
+        self.register_x = self.stack_pointer;
+        self.set_zero_and_negative(self.register_x);
+    }
+
+    // Transfer x to accumulator
+    fn txa(&mut self) {
+        self.register_a = self.register_x;
+        self.set_zero_and_negative(self.register_a);
+    }
+
+    // Transfer x to stack pointer
+    fn txs(&mut self) {
+        self.stack_pointer = self.register_x;
+    }
+
+    // Transfer y to accumulator
+    fn tya(&mut self) {
+        self.register_a = self.register_y;
+        self.set_zero_and_negative(self.register_a);
     }
 }
 
